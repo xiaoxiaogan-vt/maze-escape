@@ -1,0 +1,66 @@
+name: Behavior test – deploy to Azure
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:        # lets you also run it by hand from the Actions tab
+
+permissions:
+  contents: read            # GITHUB_TOKEN can clone this repo
+  id-token: write           # needed for passwordless Azure login (OIDC)
+
+# Baseline and candidate apps are shared resources — never let two runs deploy at once.
+concurrency:
+  group: behavior-test-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # One Azure federated credential for this environment covers push, PR and manual runs.
+    environment: azure
+    outputs:
+      baseline_url: ${{ steps.deploy.outputs.baseline_url }}
+      candidate_url: ${{ steps.deploy.outputs.candidate_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # script uses shutil.rmtree(onexc=...), 3.12+
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy baseline + candidate
+        id: deploy
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty = default branch. Later, for PRs you can use:
+          #   CANDIDATE_BRANCH: ${{ github.head_ref || github.ref_name }}
+          BASELINE_BRANCH: ""
+          CANDIDATE_BRANCH: ""
+          PROJECT_NAME: behavior-test-demo
+          RESOURCE_GROUP: behavior-testing-rg
+          LOCATION: eastus2
+          ACR_NAME: ${{ vars.ACR_NAME || 'behaviortestacr12345' }}
+          CONTAINER_ENV: behavior-testing-env
+        run: python .github/scripts/deploy.py
+
+  # Placeholder: plug your behavioral comparison tests in here.
+  behavior-tests:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Show URLs
+        run: |
+          echo "Baseline:  ${{ needs.deploy.outputs.baseline_url }}"
+          echo "Candidate: ${{ needs.deploy.outputs.candidate_url }}"
