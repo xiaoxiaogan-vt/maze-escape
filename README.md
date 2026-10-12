@@ -1,4 +1,4 @@
-# Update for testing
+# Update for testing after enabling
 
 # Maze Escape 🎮
 
